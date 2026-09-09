@@ -1,15 +1,23 @@
+#!/usr/bin/env -S uv run --env-file .env
+
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
-def mock_llm(state: MessagesState):
-    return {"messages": [{"role": "ai", "content": "hello world"}]}
+llm = ChatOpenAI(
+    model="gpt-5.6-luna"
+)
+
+def llm_call(state: MessagesState):
+    response = llm.invoke(state["messages"])
+    return MessagesState(messages=[response])
 
 def main():
     print("Hello from backend!")
     graph = StateGraph(MessagesState)
-    graph.add_node(mock_llm)
-    graph.add_edge(START, "mock_llm")
-    graph.add_edge("mock_llm", END)
+    graph.add_node(llm_call)
+    graph.add_edge(START, "llm_call")
+    graph.add_edge("llm_call", END)
     graph = graph.compile()
 
     print(graph.invoke(MessagesState(messages=[HumanMessage("hi")])))
