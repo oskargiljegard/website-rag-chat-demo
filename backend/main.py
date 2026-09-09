@@ -1,8 +1,9 @@
-#!/usr/bin/env -S uv run --env-file .env
-
+from dotenv import load_dotenv
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
+
+load_dotenv()
 
 llm = ChatOpenAI(
     model="gpt-5.6-luna"
