@@ -1,138 +1,15 @@
-"""Run a simple retrieval-augmented chat over the indexed Compileit pages."""
+"""Ask a question about Compileit from the command line."""
 
 from __future__ import annotations
 
 import argparse
-import json
-import os
+import asyncio
 from pathlib import Path
 
-from dotenv import load_dotenv
-from langchain_chroma import Chroma
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langgraph.graph import END, START, MessagesState, StateGraph
+from langchain_core.messages import HumanMessage
 
-load_dotenv()
-
-
-DEFAULT_INDEX_DIR = Path(__file__).parent / "scraping" / "results" / "compileit_index"
-DEFAULT_COLLECTION_NAME = "compileit_chunks"
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
-DEFAULT_CHAT_MODEL = "gpt-5.6-luna"
-RETRIEVAL_COUNT = 5
-
-
-class RAGState(MessagesState):
-    retrieved_context: str
-    sources: list[dict[str, str]]
-
-
-def load_index_manifest(index_dir: Path) -> dict[str, object]:
-    manifest_path = index_dir / "index-manifest.json"
-    if not manifest_path.is_file():
-        raise FileNotFoundError(
-            f"No index found at {index_dir}. Run scraping/index_chunks.py first."
-        )
-    return json.loads(manifest_path.read_text(encoding="utf-8"))
-
-
-def build_graph(index_dir: Path = DEFAULT_INDEX_DIR):
-    """Load the persistent index and build the retrieve-then-answer graph."""
-
-    manifest = load_index_manifest(index_dir)
-    embedding_model = str(manifest.get("embedding_model", DEFAULT_EMBEDDING_MODEL))
-    collection_name = str(manifest.get("collection_name", DEFAULT_COLLECTION_NAME))
-    embeddings = OpenAIEmbeddings(model=embedding_model)
-    vector_store = Chroma(
-        collection_name=collection_name,
-        embedding_function=embeddings,
-        persist_directory=str(index_dir / "chroma"),
-    )
-    retriever = vector_store.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": RETRIEVAL_COUNT},
-    )
-    llm = ChatOpenAI(model=os.getenv("OPENAI_CHAT_MODEL", DEFAULT_CHAT_MODEL))
-
-    def retrieve_documents(state: RAGState) -> dict[str, object]:
-        question = latest_question(state)
-        documents = retriever.invoke(question)
-
-        context_parts: list[str] = []
-        sources: list[dict[str, str]] = []
-        seen_source_urls: set[str] = set()
-        for index, document in enumerate(documents, start=1):
-            metadata = document.metadata
-            context_parts.append(
-                "\n".join(
-                    [
-                        f"[Retrieved chunk {index}]",
-                        f"Title: {metadata.get('page_title', '')}",
-                        f"URL: {metadata.get('source_url', '')}",
-                        f"Section: {metadata.get('heading_path', '')}",
-                        str(document.page_content),
-                    ]
-                )
-            )
-
-            source_url = str(metadata.get("source_url", ""))
-            if source_url and source_url not in seen_source_urls:
-                seen_source_urls.add(source_url)
-                sources.append(
-                    {
-                        "title": str(metadata.get("page_title", "Compileit")),
-                        "url": source_url,
-                    }
-                )
-
-        return {
-            "retrieved_context": "\n\n".join(context_parts),
-            "sources": sources,
-        }
-
-    def generate_answer(state: RAGState) -> dict[str, object]:
-        question = latest_question(state)
-        system_prompt = (
-            "You answer questions about the Compileit website. Use only the retrieved "
-            "context provided to answer. If the context does not contain enough "
-            "information, say so clearly instead of guessing. Answer in the same "
-            "language as the user's question."
-        )
-        context_prompt = (
-            f"Question:\n{question}\n\n"
-            f"Retrieved context:\n{state.get('retrieved_context', '(none)')}"
-        )
-        response = llm.invoke(
-            [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=context_prompt),
-            ]
-        )
-
-        source_lines = [
-            f"- [{source['title']}]({source['url']})" for source in state.get("sources", [])
-        ]
-        answer = str(response.content)
-        if source_lines:
-            answer += "\n\nSources:\n" + "\n".join(source_lines)
-
-        return {"messages": [AIMessage(content=answer)]}
-
-    graph = StateGraph(RAGState)
-    graph.add_node("retrieve_documents", retrieve_documents)
-    graph.add_node("generate_answer", generate_answer)
-    graph.add_edge(START, "retrieve_documents")
-    graph.add_edge("retrieve_documents", "generate_answer")
-    graph.add_edge("generate_answer", END)
-    return graph.compile()
-
-
-def latest_question(state: RAGState) -> str:
-    for message in reversed(state["messages"]):
-        if isinstance(message, HumanMessage):
-            return str(message.content)
-    raise ValueError("The graph requires at least one human question")
+from api import app  # Re-export the FastAPI app for `uv run fastapi dev`.
+from rag import DEFAULT_INDEX_DIR, build_graph
 
 
 def parse_args() -> argparse.Namespace:
@@ -142,13 +19,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+async def answer_question(question: str, index_dir: Path):
+    graph = build_graph(index_dir)
+    return await graph.ainvoke({"messages": [HumanMessage(content=question)]})
+
+
 def main() -> int:
-    load_dotenv()
     arguments = parse_args()
     question = arguments.question or input("Question: ")
-    graph = build_graph(arguments.index_dir)
-    result = graph.invoke({"messages": [HumanMessage(content=question)]})
+    result = asyncio.run(answer_question(question, arguments.index_dir))
     print(result["messages"][-1].content)
+    sources = result.get("sources", [])
+    if sources:
+        print("\nSources:")
+        for source in sources:
+            print(f"- {source['title']}: {source['url']}")
     return 0
 
 
