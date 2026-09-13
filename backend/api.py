@@ -15,7 +15,14 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from pydantic import BaseModel, Field
 
-from rag import DEFAULT_INDEX_DIR, build_graph
+from rag import (
+    CHAT_INPUT_COST_PER_1M,
+    CHAT_OUTPUT_COST_PER_1M,
+    DEFAULT_INDEX_DIR,
+    EMBEDDING_INPUT_COST_PER_1M,
+    build_graph,
+)
+from usage import calculate_cost, merge_usage
 
 
 class ChatMessage(BaseModel):
@@ -81,6 +88,8 @@ async def chat_stream(request: Request, payload: ChatRequest) -> AsyncIterator[s
     try:
         messages = to_langchain_messages(payload.messages)
         sources: list[dict[str, str]] = []
+        evidence: list[dict[str, object]] = []
+        usage_by_operation: dict[str, dict[str, int] | None] = {}
         yield sse_event("status", {"state": "searching"})
 
         async for part in get_graph().astream(
@@ -95,7 +104,15 @@ async def chat_stream(request: Request, payload: ChatRequest) -> AsyncIterator[s
                 for node_name, update in part["data"].items():
                     if node_name == "retrieve_documents":
                         sources = list(update.get("sources", []))
+                        evidence = list(update.get("evidence", []))
+                        update_usage = update.get("usage", {})
+                        if isinstance(update_usage, dict):
+                            usage_by_operation.update(update_usage)
                         yield sse_event("status", {"state": "generating"})
+                    elif node_name == "generate_answer":
+                        update_usage = update.get("usage", {})
+                        if isinstance(update_usage, dict):
+                            usage_by_operation.update(update_usage)
             elif part["type"] == "messages":
                 message_chunk, metadata = part["data"]
                 if metadata.get("langgraph_node") != "generate_answer":
@@ -109,7 +126,30 @@ async def chat_stream(request: Request, payload: ChatRequest) -> AsyncIterator[s
                 if text:
                     yield sse_event("token", {"text": text})
 
+        total_usage = merge_usage(*usage_by_operation.values())
+        total_cost = calculate_cost(
+            usage_by_operation,
+            {
+                "chat": {
+                    "input": CHAT_INPUT_COST_PER_1M,
+                    "output": CHAT_OUTPUT_COST_PER_1M,
+                },
+                "embedding": {
+                    "input": EMBEDDING_INPUT_COST_PER_1M,
+                    "output": None,
+                },
+            },
+        )
         yield sse_event("sources", {"sources": sources})
+        yield sse_event("evidence", {"evidence": evidence})
+        yield sse_event(
+            "usage",
+            {
+                "operations": usage_by_operation,
+                "total": total_usage,
+                "total_cost_usd": total_cost,
+            },
+        )
         yield sse_event("done", {})
     except Exception as error:
         yield sse_event("error", {"message": str(error)})

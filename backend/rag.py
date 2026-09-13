@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,6 +10,9 @@ from langchain_chroma import Chroma
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langgraph.graph import END, START, MessagesState, StateGraph
+from pydantic import Field
+
+from usage import normalize_usage
 
 load_dotenv()
 
@@ -18,13 +20,40 @@ load_dotenv()
 DEFAULT_INDEX_DIR = Path(__file__).parent / "scraping" / "results" / "compileit_index"
 DEFAULT_COLLECTION_NAME = "compileit_chunks"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_INPUT_COST_PER_1M = 0.02
 DEFAULT_CHAT_MODEL = "gpt-5.6-luna"
+CHAT_INPUT_COST_PER_1M = 0.20
+CHAT_OUTPUT_COST_PER_1M = 1.20
 RETRIEVAL_COUNT = 5
 
 
 class RAGState(MessagesState):
     retrieved_context: str
     sources: list[dict[str, str]]
+    evidence: list[dict[str, object]]
+    usage: dict[str, object]
+
+
+class UsageTrackingOpenAIEmbeddings(OpenAIEmbeddings):
+    """Track usage for the query embedding without changing index construction."""
+
+    last_query_usage: dict[str, int] | None = Field(default=None, exclude=True)
+
+    def embed_query(self, text: str, **kwargs: object) -> list[float]:
+        self._ensure_sync_client_available()
+        response = self.client.create(
+            input=[text],
+            **{**self._invocation_params, **kwargs},
+        )
+        if not isinstance(response, dict):
+            response = response.model_dump()
+        self.last_query_usage = normalize_usage(response.get("usage"))
+        return list(response["data"][0]["embedding"])
+
+    def consume_query_usage(self) -> dict[str, int] | None:
+        usage = self.last_query_usage
+        self.last_query_usage = None
+        return usage
 
 
 def load_index_manifest(index_dir: Path) -> dict[str, object]:
@@ -42,7 +71,7 @@ def build_graph(index_dir: Path = DEFAULT_INDEX_DIR):
     manifest = load_index_manifest(index_dir)
     embedding_model = str(manifest.get("embedding_model", DEFAULT_EMBEDDING_MODEL))
     collection_name = str(manifest.get("collection_name", DEFAULT_COLLECTION_NAME))
-    embeddings = OpenAIEmbeddings(model=embedding_model)
+    embeddings = UsageTrackingOpenAIEmbeddings(model=embedding_model)
     vector_store = Chroma(
         collection_name=collection_name,
         embedding_function=embeddings,
@@ -52,7 +81,7 @@ def build_graph(index_dir: Path = DEFAULT_INDEX_DIR):
         search_type="similarity",
         search_kwargs={"k": RETRIEVAL_COUNT},
     )
-    llm = ChatOpenAI(model=os.getenv("OPENAI_CHAT_MODEL", DEFAULT_CHAT_MODEL))
+    llm = ChatOpenAI(model=DEFAULT_CHAT_MODEL)
 
     async def retrieve_documents(state: RAGState) -> dict[str, object]:
         question = latest_question(state)
@@ -60,9 +89,20 @@ def build_graph(index_dir: Path = DEFAULT_INDEX_DIR):
 
         context_parts: list[str] = []
         sources: list[dict[str, str]] = []
+        evidence: list[dict[str, object]] = []
         seen_source_urls: set[str] = set()
         for index, document in enumerate(documents, start=1):
             metadata = document.metadata
+            evidence.append(
+                {
+                    "chunk_id": str(metadata.get("chunk_id", "")),
+                    "source_url": str(metadata.get("source_url", "")),
+                    "page_title": str(metadata.get("page_title", "")),
+                    "heading_path": str(metadata.get("heading_path", "")),
+                    "chunk_index": int(metadata.get("chunk_index", index)),
+                    "excerpt": str(document.page_content)[:2_000],
+                }
+            )
             context_parts.append(
                 "\n".join(
                     [
@@ -88,6 +128,8 @@ def build_graph(index_dir: Path = DEFAULT_INDEX_DIR):
         return {
             "retrieved_context": "\n\n".join(context_parts),
             "sources": sources,
+            "evidence": evidence,
+            "usage": {"embedding": embeddings.consume_query_usage()},
         }
 
     async def generate_answer(state: RAGState) -> dict[str, object]:
@@ -111,7 +153,19 @@ def build_graph(index_dir: Path = DEFAULT_INDEX_DIR):
                 HumanMessage(content=context_prompt),
             ]
         )
-        return {"messages": [AIMessage(content=str(response.content))]}
+        response_metadata = getattr(response, "response_metadata", {})
+        token_usage = (
+            response_metadata.get("token_usage", {})
+            if isinstance(response_metadata, dict)
+            else {}
+        )
+        chat_usage = normalize_usage(getattr(response, "usage_metadata", None))
+        if chat_usage is None:
+            chat_usage = normalize_usage(token_usage)
+        return {
+            "messages": [AIMessage(content=str(response.content))],
+            "usage": {"chat": chat_usage},
+        }
 
     graph = StateGraph(RAGState)
     graph.add_node("retrieve_documents", retrieve_documents)
