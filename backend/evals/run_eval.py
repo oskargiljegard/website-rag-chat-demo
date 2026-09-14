@@ -51,9 +51,15 @@ def load_dataset(path: Path) -> list[dict[str, Any]]:
             case = json.loads(line)
             if not isinstance(case, dict):
                 raise ValueError(f"Expected an object on line {line_number} of {path}")
-            for required_field in ("id", "question", "expected_sources"):
+            for required_field in ("id", "question", "expected_sources", "answer_requirements"):
                 if required_field not in case:
                     raise ValueError(f"Dataset line {line_number} is missing {required_field}")
+            if not isinstance(case["answer_requirements"], list) or not all(
+                isinstance(requirement, str) for requirement in case["answer_requirements"]
+            ):
+                raise ValueError(
+                    f"Dataset line {line_number} must contain a list of string answer requirements"
+                )
             cases.append(case)
     return cases
 
@@ -146,40 +152,28 @@ def score_sources(expected_sources: list[str], returned_sources: list[dict[str, 
 
 
 def judge_answer(case: dict[str, Any], answer: str, model_name: str = DEFAULT_CHAT_MODEL) -> dict[str, Any]:
-    if not case.get("reference_answer") and not case.get("required_facts"):
-        return {"correct": None, "reason": "No reference answer or required facts provided."}
-
     judge = ChatOpenAI(model=model_name)
-    reference = case.get("reference_answer", "(no reference answer provided)")
-    required_facts = ", ".join(case.get("required_facts", [])) or "(none listed)"
-    allowed_facts = ", ".join(case.get("allowed_facts", [])) or "(none listed)"
-    answer_requirements = "; ".join(case.get("answer_requirements", [])) or "(none listed)"
-    additional_fact_instruction = (
-        "For this case, if the answer names additional industries or customer-sector "
-        "examples, only accept facts listed as allowed or clear synonyms/paraphrases of "
-        "them; mark other invented examples false."
-        if case.get("allowed_facts")
-        else "No special allow-list applies to additional facts; evaluate them against the reference answer and the question."
+    answer_requirements = "\n".join(
+        f"{index}. {requirement}"
+        for index, requirement in enumerate(case["answer_requirements"], start=1)
     )
     response = judge.invoke(
         [
             SystemMessage(
                 content=(
-                    "Judge whether an answer to a website question is correct. "
-                    "Return only valid JSON with exactly these keys: correct (boolean) "
-                    "and reason (short string). Mark correct false if it misses a required "
-                    "fact, violates an answer requirement, or makes a material unsupported "
-                    "claim. Do not judge the separate source list; judge only the answer "
-                    "text. "
-                    f"{additional_fact_instruction}"
+                    "Evaluate how well an answer satisfies the answer requirements for a "
+                    "website question. Return only valid JSON with exactly these keys: "
+                    "score (number from 0 to 1) and reason (short string). Give 1.0 only "
+                    "when all requirements are satisfied. Lower the score for missing "
+                    "requirements, violated restrictions, or materially misleading "
+                    "content. Judge only the answer text against the listed requirements; "
+                    "do not judge the separate source list. Harmless connective wording "
+                    "and clear paraphrases are allowed unless a requirement says otherwise."
                 )
             ),
             HumanMessage(
                 content=(
                     f"Question:\n{case['question']}\n\n"
-                    f"Reference answer:\n{reference}\n\n"
-                    f"Required facts:\n{required_facts}\n\n"
-                    f"Allowed additional facts:\n{allowed_facts}\n\n"
                     f"Answer requirements:\n{answer_requirements}\n\n"
                     f"Actual answer:\n{answer}"
                 )
@@ -192,7 +186,13 @@ def judge_answer(case: dict[str, Any], answer: str, model_name: str = DEFAULT_CH
     try:
         judgment = json.loads(raw_content)
     except json.JSONDecodeError:
-        judgment = {"correct": None, "reason": f"Judge returned non-JSON output: {raw_content}"}
+        judgment = {"score": None, "reason": f"Judge returned non-JSON output: {raw_content}"}
+    score = judgment.get("score")
+    if isinstance(score, bool) or not isinstance(score, (int, float)) or not 0 <= score <= 1:
+        judgment["score"] = None
+        judgment["reason"] = judgment.get("reason") or "Judge returned an invalid score."
+    else:
+        judgment["score"] = float(score)
     judgment["usage"] = normalize_usage(getattr(response, "usage_metadata", None))
     return judgment
 
@@ -260,7 +260,7 @@ def main() -> int:
                     },
                 )
             judgment = judge_answer(case, result["answer"])
-            result["answer_correct"] = judgment.get("correct")
+            result["answer_score"] = judgment.get("score")
             result["answer_judge_reason"] = judgment.get("reason")
             result["judge_usage"] = judgment.get("usage")
             result["judge_cost_usd"] = calculate_cost(
@@ -301,10 +301,10 @@ def main() -> int:
             if successful
             else None
         ),
-        "answer_correctness_rate": (
-            sum(bool(result.get("answer_correct")) for result in successful if result.get("answer_correct") is not None)
-            / sum(result.get("answer_correct") is not None for result in successful)
-            if any(result.get("answer_correct") is not None for result in successful)
+        "answer_score_average": (
+            sum(result["answer_score"] for result in successful if result.get("answer_score") is not None)
+            / sum(result.get("answer_score") is not None for result in successful)
+            if any(result.get("answer_score") is not None for result in successful)
             else None
         ),
         "total_application_cost_usd": sum(costs) if costs else None,
