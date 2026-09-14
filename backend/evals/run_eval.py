@@ -152,6 +152,15 @@ def judge_answer(case: dict[str, Any], answer: str, model_name: str = DEFAULT_CH
     judge = ChatOpenAI(model=model_name)
     reference = case.get("reference_answer", "(no reference answer provided)")
     required_facts = ", ".join(case.get("required_facts", [])) or "(none listed)"
+    allowed_facts = ", ".join(case.get("allowed_facts", [])) or "(none listed)"
+    answer_requirements = "; ".join(case.get("answer_requirements", [])) or "(none listed)"
+    additional_fact_instruction = (
+        "For this case, if the answer names additional industries or customer-sector "
+        "examples, only accept facts listed as allowed or clear synonyms/paraphrases of "
+        "them; mark other invented examples false."
+        if case.get("allowed_facts")
+        else "No special allow-list applies to additional facts; evaluate them against the reference answer and the question."
+    )
     response = judge.invoke(
         [
             SystemMessage(
@@ -159,7 +168,10 @@ def judge_answer(case: dict[str, Any], answer: str, model_name: str = DEFAULT_CH
                     "Judge whether an answer to a website question is correct. "
                     "Return only valid JSON with exactly these keys: correct (boolean) "
                     "and reason (short string). Mark correct false if it misses a required "
-                    "fact or makes a material unsupported claim. Do not judge the sources."
+                    "fact, violates an answer requirement, or makes a material unsupported "
+                    "claim. Do not judge the separate source list; judge only the answer "
+                    "text. "
+                    f"{additional_fact_instruction}"
                 )
             ),
             HumanMessage(
@@ -167,6 +179,8 @@ def judge_answer(case: dict[str, Any], answer: str, model_name: str = DEFAULT_CH
                     f"Question:\n{case['question']}\n\n"
                     f"Reference answer:\n{reference}\n\n"
                     f"Required facts:\n{required_facts}\n\n"
+                    f"Allowed additional facts:\n{allowed_facts}\n\n"
+                    f"Answer requirements:\n{answer_requirements}\n\n"
                     f"Actual answer:\n{answer}"
                 )
             ),
