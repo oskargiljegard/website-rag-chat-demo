@@ -31,7 +31,7 @@ from rag import (
 from usage import calculate_cost, normalize_usage
 
 
-DEFAULT_DATASET = Path(__file__).parent / "dataset.jsonl"
+DEFAULT_DATASET = Path(__file__).parent / "dataset.json"
 DEFAULT_RESULTS_DIR = Path(__file__).parent / "results"
 
 load_dotenv(Path(__file__).parents[1] / ".env")
@@ -43,24 +43,25 @@ def environment_float(name: str) -> float | None:
 
 
 def load_dataset(path: Path) -> list[dict[str, Any]]:
-    cases: list[dict[str, Any]] = []
     with path.open(encoding="utf-8") as dataset_file:
-        for line_number, line in enumerate(dataset_file, start=1):
-            if not line.strip():
-                continue
-            case = json.loads(line)
-            if not isinstance(case, dict):
-                raise ValueError(f"Expected an object on line {line_number} of {path}")
-            for required_field in ("id", "question", "expected_sources", "answer_requirements"):
-                if required_field not in case:
-                    raise ValueError(f"Dataset line {line_number} is missing {required_field}")
-            if not isinstance(case["answer_requirements"], list) or not all(
-                isinstance(requirement, str) for requirement in case["answer_requirements"]
-            ):
-                raise ValueError(
-                    f"Dataset line {line_number} must contain a list of string answer requirements"
-                )
-            cases.append(case)
+        data = json.load(dataset_file)
+    if not isinstance(data, list):
+        raise ValueError(f"Expected a JSON array in {path}")
+
+    cases: list[dict[str, Any]] = []
+    for index, case in enumerate(data, start=1):
+        if not isinstance(case, dict):
+            raise ValueError(f"Expected an object at index {index} of {path}")
+        for required_field in ("id", "question", "expected_sources", "answer_requirements"):
+            if required_field not in case:
+                raise ValueError(f"Dataset item {index} is missing {required_field}")
+        if not isinstance(case["answer_requirements"], list) or not all(
+            isinstance(requirement, str) for requirement in case["answer_requirements"]
+        ):
+            raise ValueError(
+                f"Dataset item {index} must contain a list of string answer requirements"
+            )
+        cases.append(case)
     return cases
 
 
@@ -278,10 +279,11 @@ def main() -> int:
         results.append(result)
 
     DEFAULT_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    result_path = DEFAULT_RESULTS_DIR / f"{run_name}.jsonl"
-    with result_path.open("w", encoding="utf-8") as result_file:
-        for result in results:
-            result_file.write(json.dumps(result, ensure_ascii=False) + "\n")
+    result_path = DEFAULT_RESULTS_DIR / f"{run_name}.json"
+    result_path.write_text(
+        json.dumps(results, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
     successful = [result for result in results if result.get("status") == "ok"]
     timings = [result["timing_ms"] for result in successful if result.get("timing_ms")]

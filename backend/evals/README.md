@@ -20,8 +20,8 @@ From `backend/`:
 uv run evals/run_eval.py
 ```
 
-Results are written to `evals/results/` as one JSONL record per case and one
-summary JSON file per run. The evaluator always runs the complete dataset and
+Results are written to `evals/results/` as one pretty-printed JSON array per run
+and one summary JSON file per run. The evaluator always runs the complete dataset and
 records the final answer, page-level sources, optional evidence excerpts, usage,
 cost, and streaming timings.
 
