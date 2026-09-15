@@ -84,6 +84,21 @@ def sse_event(event: str, data: object) -> str:
     )
 
 
+def record_operation_usage(
+    usage_by_operation: dict[str, dict[str, int] | None],
+    update_usage: object,
+) -> None:
+    """Accumulate usage because an agent may call the model more than once."""
+
+    if not isinstance(update_usage, dict):
+        return
+    for operation, usage in update_usage.items():
+        if usage is None or isinstance(usage, dict):
+            usage_by_operation[operation] = merge_usage(
+                usage_by_operation.get(operation), usage
+            )
+
+
 async def chat_stream(request: Request, payload: ChatRequest) -> AsyncIterator[str]:
     try:
         messages = to_langchain_messages(payload.messages)
@@ -105,17 +120,27 @@ async def chat_stream(request: Request, payload: ChatRequest) -> AsyncIterator[s
                     if node_name == "retrieve_documents":
                         sources = list(update.get("sources", []))
                         evidence = list(update.get("evidence", []))
-                        update_usage = update.get("usage", {})
-                        if isinstance(update_usage, dict):
-                            usage_by_operation.update(update_usage)
+                        record_operation_usage(usage_by_operation, update.get("usage", {}))
                         yield sse_event("status", {"state": "generating"})
                     elif node_name == "generate_answer":
-                        update_usage = update.get("usage", {})
-                        if isinstance(update_usage, dict):
-                            usage_by_operation.update(update_usage)
+                        record_operation_usage(usage_by_operation, update.get("usage", {}))
+                    elif node_name == "agent":
+                        record_operation_usage(usage_by_operation, update.get("usage", {}))
+                        messages = update.get("messages", [])
+                        last_message = messages[-1] if messages else None
+                        state = (
+                            "searching"
+                            if isinstance(last_message, AIMessage) and last_message.tool_calls
+                            else "generating"
+                        )
+                        yield sse_event("status", {"state": state})
+                    elif node_name == "finalize":
+                        sources = list(update.get("sources", []))
+                        evidence = list(update.get("evidence", []))
+                        record_operation_usage(usage_by_operation, update.get("usage", {}))
             elif part["type"] == "messages":
                 message_chunk, metadata = part["data"]
-                if metadata.get("langgraph_node") != "generate_answer":
+                if metadata.get("langgraph_node") not in {"generate_answer", "agent"}:
                     continue
                 # LangGraph emits incremental AIMessageChunks and then a final
                 # complete AIMessage for the node. Only forward the chunks;

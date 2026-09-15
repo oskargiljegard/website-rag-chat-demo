@@ -33,6 +33,7 @@ from usage import calculate_cost, normalize_usage
 
 DEFAULT_DATASET = Path(__file__).parent / "dataset.json"
 DEFAULT_RESULTS_DIR = Path(__file__).parent / "results"
+NUM_RUNS = 5
 
 load_dotenv(Path(__file__).parents[1] / ".env")
 
@@ -221,7 +222,7 @@ def git_revision(project_dir: Path) -> str | None:
 
 
 def main() -> int:
-    base_url = os.getenv("EVAL_API_URL", "http://localhost:8000")
+    base_url = os.getenv("EVAL_API_URL", "http://127.0.0.1:8000")
     timeout = environment_float("EVAL_TIMEOUT_SECONDS") or 180.0
     chat_prices = {
         "input": CHAT_INPUT_COST_PER_1M,
@@ -242,41 +243,44 @@ def main() -> int:
 
     run_name = datetime.now().strftime("%Y%m%d-%H%M%S")
     results: list[dict[str, Any]] = []
-    for case in cases:
-        print(f"Running {case['id']}...", flush=True)
-        try:
-            result = call_streaming_api(base_url, case["question"], timeout)
-            result.update(score_sources(case["expected_sources"], result["sources"]))
-            result["id"] = case["id"]
-            result["question"] = case["question"]
-            result["expected_sources"] = case["expected_sources"]
-            operations = result.get("usage", {}).get("operations", {})
-            result["total_cost_usd"] = result.get("usage", {}).get("total_cost_usd")
-            if result["total_cost_usd"] is None and isinstance(operations, dict):
-                result["total_cost_usd"] = calculate_cost(
-                    operations,
-                    {
-                        "chat": chat_prices,
-                        "embedding": embedding_prices,
-                    },
+    for run_number in range(1, NUM_RUNS + 1):
+        for case in cases:
+            print(f"Run {run_number}/{NUM_RUNS}: {case['id']}...", flush=True)
+            try:
+                result = call_streaming_api(base_url, case["question"], timeout)
+                result.update(score_sources(case["expected_sources"], result["sources"]))
+                result["id"] = case["id"]
+                result["question"] = case["question"]
+                result["expected_sources"] = case["expected_sources"]
+                result["run_number"] = run_number
+                operations = result.get("usage", {}).get("operations", {})
+                result["total_cost_usd"] = result.get("usage", {}).get("total_cost_usd")
+                if result["total_cost_usd"] is None and isinstance(operations, dict):
+                    result["total_cost_usd"] = calculate_cost(
+                        operations,
+                        {
+                            "chat": chat_prices,
+                            "embedding": embedding_prices,
+                        },
+                    )
+                judgment = judge_answer(case, result["answer"])
+                result["answer_score"] = judgment.get("score")
+                result["answer_judge_reason"] = judgment.get("reason")
+                result["judge_usage"] = judgment.get("usage")
+                result["judge_cost_usd"] = calculate_cost(
+                    {"chat": judgment.get("usage")},
+                    {"chat": judge_prices},
                 )
-            judgment = judge_answer(case, result["answer"])
-            result["answer_score"] = judgment.get("score")
-            result["answer_judge_reason"] = judgment.get("reason")
-            result["judge_usage"] = judgment.get("usage")
-            result["judge_cost_usd"] = calculate_cost(
-                {"chat": judgment.get("usage")},
-                {"chat": judge_prices},
-            )
-            result["status"] = "ok"
-        except Exception as error:
-            result = {
-                "id": case["id"],
-                "question": case["question"],
-                "status": "error",
-                "error": str(error),
-            }
-        results.append(result)
+                result["status"] = "ok"
+            except Exception as error:
+                result = {
+                    "id": case["id"],
+                    "question": case["question"],
+                    "run_number": run_number,
+                    "status": "error",
+                    "error": str(error),
+                }
+            results.append(result)
 
     DEFAULT_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     result_path = DEFAULT_RESULTS_DIR / f"{run_name}.json"
@@ -294,6 +298,8 @@ def main() -> int:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "git_revision": git_revision(Path(__file__).parents[1]),
         "dataset": str(DEFAULT_DATASET),
+        "dataset_case_count": len(cases),
+        "num_runs": NUM_RUNS,
         "base_url": base_url,
         "case_count": len(results),
         "successful_count": len(successful),
