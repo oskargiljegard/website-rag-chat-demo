@@ -38,7 +38,10 @@ def build_agent_graph(index_dir: Path = DEFAULT_INDEX_DIR):
         payload = documents_payload(documents, embeddings.consume_query_usage())
         return json.dumps(payload, ensure_ascii=False)
 
-    llm = build_chat_model(reasoning_effort="none").bind_tools(
+    llm = build_chat_model(
+        use_responses_api=True,
+        reasoning_effort="low",
+    ).bind_tools(
         [fetch_documents],
         parallel_tool_calls=False,
     )
