@@ -50,6 +50,12 @@ agentic: it can call `fetch_documents` repeatedly, with five documents per call.
 Set `RAG_GRAPH=simple` before starting the backend to use the original fixed
 retrieve-then-answer graph.
 
+# Why this design
+
+- Evals are important early to objectively measure improvements
+- Multiple steps in the preprocessing allow Agent harnesses to inspect the results and find improvements
+- Showing sources to the end user makes it easy for them to read more about the subject
+
 # Design decisions
 
 A big part of this project was the Eval to be able to measure the performance of the system. The preprocessing and the frontend had lower priority, in order to prioritise getting measurably good answers from the system.
@@ -92,6 +98,7 @@ The eval results show that the simple graph performs substantially better than t
 Disclaimers:
 - Having 5 questions is way too low for a good eval
 - The answer criteria are not perfect. E.g. including "hello@compileit.com" is currently impossible because the chunking strategy removes it
+- Eval does not penalize irrelevant sources
 
 # Known issues, limitations
 
