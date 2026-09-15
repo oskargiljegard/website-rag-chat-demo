@@ -56,7 +56,7 @@ A big part of this project was the Eval to be able to measure the performance of
 
 ## Preprocessing
 
-An initial script crawls the website and stores it locally. It intentionally ignores subdomains, for example https://careers.compileit.com/ since that seemed to use a different tech stack which may make the next pre-processing steps more difficult. A raw dump of all html pages is a great source of truth, and allows agents like Codex to quickly find answers in there instead of having to go to the actual website.
+An initial script crawls the website and stores it locally. It intentionally ignores subdomains (except www), for example https://careers.compileit.com/ since that seemed to use a different tech stack which may make the next pre-processing steps more difficult. A raw dump of all html pages is a great source of truth, and allows agents like Codex to quickly find answers in there instead of having to go to the actual website.
 
 A second script converts the html to chunks based on html tags. The chunks are both stored as chunks.jsonl for the next script, and as more easily viewable markdown files.
 
@@ -74,13 +74,20 @@ The second graph is an agent which uses fetch_documents as a tool.
 
 ## Frontend
 
-The frontend is a very simple NextJS application. It sends requests to an endpoint defined with FastAPI which streams the result as SSE back. It is important for an AI assistant to provide sources for its claims, so the frontend also shows the URLs that contains the chunks that were used when generating the answer.
+The frontend is a very simple NextJS application. It sends requests to an endpoint defined with FastAPI which streams the result as SSE back. It is important for an AI assistant to provide sources for its claims, so the frontend also provides links to the pages that contain the chunks that were used when generating the answer.
 
 ## Eval
 
 One of the most important parts of an AI assistant is an Eval, since that provides a way to measure performance.
 
 I took 5 questions, let Codex use the raw HTML files to provide good answer criterias and expected sources, and used that to create a dataset. The eval checks those questions against the FastAPI endpoint. It measures cost, latency, how well we found the expected sources, and how well the question was answered.
+
+The eval results show that the simple graph performs substantially better than the agent graph across answer quality, source correctness, cost, and time to first token.
+
+| Graph | Answer score | Source score | Application cost | Median time to first token |
+| --- | ---: | ---: | ---: | ---: |
+| Agent graph | 0.5128 | 72% | $0.02719848 | 5.42 s |
+| Simple graph | 0.6240 | 80% | $0.01267600 | 1.21 s |
 
 Disclaimers:
 - Having 5 questions is way too low for a good eval
