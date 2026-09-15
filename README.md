@@ -10,6 +10,17 @@ A demo application for an AI chat website with RAG capabilities
 
 # Setup
 
+# Creating the data
+
+Run the preprocessing scripts in order:
+
+```powershell
+cd backend
+uv run scraping/crawl.py
+uv run scraping/chunk_pages.py
+uv run scraping/index_chunks.py
+```
+
 # Running the system
 
 Start the backend API:
@@ -70,6 +81,10 @@ The frontend is a very simple NextJS application. It sends requests to an endpoi
 One of the most important parts of an AI assistant is an Eval, since that provides a way to measure performance.
 
 I took 5 questions, let Codex use the raw HTML files to provide good answer criterias and expected sources, and used that to create a dataset. The eval checks those questions against the FastAPI endpoint. It measures cost, latency, how well we found the expected sources, and how well the question was answered.
+
+Disclaimers:
+- Having 5 questions is way too low for a good eval
+- The answer criteria are not perfect. E.g. including "hello@compileit.com" is currently impossible because the chunking strategy removes it
 
 # Known issues, limitations
 
