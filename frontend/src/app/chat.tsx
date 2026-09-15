@@ -24,6 +24,8 @@ type StreamEvent = {
   data: string;
 };
 
+class UserFacingError extends Error {}
+
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
 
 const suggestions = [
@@ -149,10 +151,10 @@ export default function Chat() {
       });
 
       if (!response.ok) {
-        throw new Error(`Backend request failed (${response.status})`);
+        throw new UserFacingError(`Anropet till servern misslyckades (${response.status}).`);
       }
       if (!response.body) {
-        throw new Error("The backend returned no stream.");
+        throw new UserFacingError("Servern returnerade ingen dataström.");
       }
 
       for await (const event of parseSSE(response.body)) {
@@ -160,7 +162,6 @@ export default function Chat() {
           state?: "searching" | "generating";
           text?: string;
           sources?: Source[];
-          message?: string;
         };
 
         if (event.event === "status" && data.state) {
@@ -176,7 +177,7 @@ export default function Chat() {
         } else if (event.event === "sources") {
           updateMessage(assistantId, { sources: data.sources ?? [] });
         } else if (event.event === "error") {
-          throw new Error(data.message ?? "The backend returned an error.");
+          throw new UserFacingError("Servern returnerade ett fel.");
         }
       }
     } catch (error) {
@@ -184,7 +185,7 @@ export default function Chat() {
         updateMessage(assistantId, { status: "stopped" });
       } else {
         updateMessage(assistantId, {
-          content: error instanceof Error ? error.message : "Something went wrong.",
+          content: error instanceof UserFacingError ? error.message : "Något gick fel. Försök igen.",
           error: true,
           status: undefined,
         });
@@ -219,12 +220,12 @@ export default function Chat() {
             C
           </div>
           <div>
-            <h1 className="font-semibold tracking-tight text-slate-950">Compileit assistant</h1>
-            <p className="text-sm text-slate-500">Ask questions about Compileit&apos;s website</p>
+            <h1 className="font-semibold tracking-tight text-slate-950">Compileits assistent</h1>
+            <p className="text-sm text-slate-500">Ställ frågor om Compileits webbplats</p>
           </div>
         </div>
         <span className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 sm:inline-flex">
-          Website knowledge base
+          Kunskapsbas från webbplatsen
         </span>
       </header>
 
@@ -235,9 +236,9 @@ export default function Chat() {
               <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-teal-100 text-3xl text-teal-800">
                 ✦
               </div>
-              <h2 className="text-2xl font-semibold tracking-tight text-slate-950">What would you like to know?</h2>
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Vad vill du veta?</h2>
               <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-                Ask about Compileit&apos;s services, projects, careers, or articles. Answers are based on the fetched website content.
+                Fråga om Compileits tjänster, projekt, lediga tjänster eller artiklar. Svaren baseras på innehåll som har hämtats från webbplatsen.
               </p>
               <div className="mt-7 grid w-full max-w-2xl gap-3 sm:grid-cols-3">
                 {suggestions.map((suggestion) => (
@@ -267,22 +268,22 @@ export default function Chat() {
                         : "rounded-bl-md border border-slate-200 bg-white text-slate-700"
                   }`}
                 >
-                  {message.role === "assistant" && message.status && !message.content ? (
+                  {message.role === "assistant" && message.status && message.status !== "stopped" && !message.content ? (
                     <div className="flex items-center gap-2 text-sm text-slate-500">
                       <span className="flex gap-1">
                         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-teal-500 [animation-delay:-0.2s]" />
                         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-teal-500 [animation-delay:-0.1s]" />
                         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-teal-500" />
                       </span>
-                      {message.status === "searching" ? "Searching the website…" : "Writing an answer…"}
+                      {message.status === "searching" ? "Söker på webbplatsen…" : "Skriver ett svar…"}
                     </div>
                   ) : message.role === "assistant" ? (
                     <>
                       <MarkdownAnswer content={message.content} />
-                      {message.status === "stopped" && <p className="mt-2 text-xs text-slate-400">Generation stopped.</p>}
+                      {message.status === "stopped" && <p className="mt-2 text-xs text-slate-400">Genereringen avbröts.</p>}
                       {!!message.sources?.length && (
                         <div className="mt-5 border-t border-slate-200 pt-3 text-xs leading-5">
-                          <p className="mb-1 font-semibold uppercase tracking-[0.14em] text-slate-400">Sources</p>
+                          <p className="mb-1 font-semibold uppercase tracking-[0.14em] text-slate-400">Källor</p>
                           <ul className="space-y-1">
                             {message.sources.map((source) => (
                               <li key={source.url}>
@@ -311,21 +312,21 @@ export default function Chat() {
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={handleInputKeyDown}
-              placeholder="Ask a question about Compileit…"
+              placeholder="Ställ en fråga om Compileit…"
               rows={2}
               disabled={isStreaming}
               className="max-h-40 min-h-12 w-full resize-none bg-transparent px-3 py-2 text-[15px] leading-6 text-slate-950 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
-              aria-label="Your question"
+              aria-label="Din fråga"
             />
             <div className="flex items-center justify-between px-2 pb-1">
-              <p className="text-xs text-slate-400">Enter to send · Shift+Enter for a new line</p>
+              <p className="text-xs text-slate-400">Enter för att skicka · Shift+Enter för ny rad</p>
               {isStreaming ? (
                 <button
                   type="button"
                   onClick={stopStreaming}
                   className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-500 hover:text-slate-950"
                 >
-                  Stop
+                  Avbryt
                 </button>
               ) : (
                 <button
@@ -333,12 +334,12 @@ export default function Chat() {
                   disabled={!input.trim()}
                   className="rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
                 >
-                  Send
+                  Skicka
                 </button>
               )}
             </div>
           </form>
-          <p className="mt-3 text-center text-xs text-slate-400">This chat is temporary and is cleared when you refresh the page.</p>
+          <p className="mt-3 text-center text-xs text-slate-400">Chatten är tillfällig och rensas när du uppdaterar sidan.</p>
         </div>
       </section>
     </main>

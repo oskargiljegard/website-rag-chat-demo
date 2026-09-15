@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Compileit assistant",
-  description: "Ask questions about Compileit's website.",
+  title: "Compileits assistent",
+  description: "Ställ frågor om Compileits webbplats.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="sv" className="h-full antialiased">
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
