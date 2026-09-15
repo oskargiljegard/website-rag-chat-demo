@@ -76,5 +76,17 @@
       "Nämn utvecklare, designers, analytiker och strateger som exempel på teamets kompetenser.",
       "Du får sammanfatta de tre punkterna med egna ord, men lägg inte till obelagda påståenden om sidan."
     ]
+  },
+  {
+    "id": "unknown-support-response-time-001",
+    "question": "Vilken svarstid garanterar Compileit för supportärenden från sina kunder?",
+    "expected_sources": [],
+    "answer_requirements": [
+      "Svara på svenska.",
+      "Säg tydligt att det indexerade innehållet på Compileits webbplats inte anger någon garanterad svarstid för supportärenden från Compileits kunder.",
+      "Ange inte någon svarstid, servicenivå eller SLA för Compileits egen kundsupport.",
+      "Förväxla inte Compileits egen kundsupport med kundservicelösningar som Compileit har byggt åt sina kunder.",
+      "Om svaret nämner uppgiften om 0,2 sekunders svarstid för en AI-agent måste det tydligt framgå att den gäller en kundlösning för SkiStar och inte en garanti för Compileits egen support."
+    ]
   }
 ]

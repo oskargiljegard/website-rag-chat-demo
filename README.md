@@ -86,17 +86,17 @@ The frontend is a very simple NextJS application. It sends requests to an endpoi
 
 One of the most important parts of an AI assistant is an Eval, since that provides a way to measure performance.
 
-I took 5 questions, let Codex use the raw HTML files to provide good answer criterias and expected sources, and used that to create a dataset. The eval checks those questions against the FastAPI endpoint. It measures cost, latency, how well we found the expected sources, and how well the question was answered.
+I took 5 questions, let Codex use the raw HTML files to provide good answer criteria and expected sources, and used that to create a dataset. The eval checks these 6 questions against the FastAPI endpoint. It measures cost, latency, how well we found the expected sources, and how well the question was answered.
 
-The eval results show that the simple graph performs substantially better than the agent graph across answer quality, source correctness, cost, and time to first token.
+The eval results show that the simple graph performs substantially better than the agent graph in answer quality, cost, and time to first token. Both graphs found the expected sources at the same rate.
 
 | Graph | Answer score | Source score | Application cost | Median time to first token |
 | --- | ---: | ---: | ---: | ---: |
-| Agent graph | 0.5128 | 72% | $0.02719848 | 5.42 s |
-| Simple graph | 0.6240 | 80% | $0.01267600 | 1.21 s |
+| Agent graph | 0.6033 | 83.3% | $0.03405320 | 4.94 s |
+| Simple graph | 0.6873 | 83.3% | $0.01456180 | 1.19 s |
 
 Disclaimers:
-- Having 5 questions is way too low for a good eval
+- Having 6 questions is way too low for a good eval
 - The answer criteria are not perfect. E.g. including "hello@compileit.com" is currently impossible because the chunking strategy removes it
 - Eval does not penalize irrelevant sources
 
